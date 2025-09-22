@@ -2,6 +2,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
+import { ReviewForm, LeadForm } from "@/components/review-lead-forms";
 
 type Product = {
   id: string;
@@ -31,9 +32,9 @@ type Review = {
   date: string;
 };
 
-// AFTER (Next 15)
+// Next 15: headers() is async
 async function getBaseUrl() {
-  const h = await headers(); // headers() is async now
+  const h = await headers();
   const proto = h.get("x-forwarded-proto") || "http";
   const host = h.get("host") || "localhost:3000";
   return `${proto}://${host}`;
@@ -47,7 +48,6 @@ async function fetchJSON<T>(path: string): Promise<T> {
 }
 
 async function getProductBySlugOrId(slugOrId: string): Promise<Product | null> {
-  // If it looks like an Airtable record id, call a by-id endpoint; otherwise use slug endpoint.
   const isRecId = slugOrId.startsWith("rec");
   if (isRecId) {
     return fetchJSON<Product>(`/api/products/by-id/${slugOrId}`).catch(
@@ -154,7 +154,7 @@ export default async function ProductDetail({
               </a>
             )}
             <Link
-              href={`/products`}
+              href="/products"
               className="inline-flex items-center rounded-full px-5 py-3 border"
             >
               All products
@@ -253,6 +253,20 @@ export default async function ProductDetail({
                 </article>
               ))}
             </div>
+
+            {/* Write a review form */}
+            <section className="mt-8">
+              <h3 className="text-lg font-semibold mb-2">Write a review</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                Share your experience. Your review will appear after approval.
+              </p>
+              <ReviewForm
+                productId={product.id}
+                onPosted={() => {
+                  /* optional: revalidate/refresh */
+                }}
+              />
+            </section>
           </section>
         </div>
 
@@ -277,6 +291,17 @@ export default async function ProductDetail({
             >
               Read reviews
             </a>
+          </div>
+
+          {/* Request info form */}
+          <div className="border rounded-xl p-4">
+            <div className="text-sm font-semibold mb-2">Request Info</div>
+            <LeadForm
+              productId={product.id}
+              onPosted={() => {
+                /* toast ok */
+              }}
+            />
           </div>
 
           <div className="border rounded-xl p-4">
