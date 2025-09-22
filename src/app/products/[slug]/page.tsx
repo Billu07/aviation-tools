@@ -260,12 +260,7 @@ export default async function ProductDetail({
               <p className="text-sm text-muted-foreground mb-3">
                 Share your experience. Your review will appear after approval.
               </p>
-              <ReviewForm
-                productId={product.id}
-                onPosted={() => {
-                  /* optional: revalidate/refresh */
-                }}
-              />
+              <ReviewForm productId={product.id} />
             </section>
           </section>
         </div>
@@ -296,12 +291,7 @@ export default async function ProductDetail({
           {/* Request info form */}
           <div className="border rounded-xl p-4">
             <div className="text-sm font-semibold mb-2">Request Info</div>
-            <LeadForm
-              productId={product.id}
-              onPosted={() => {
-                /* toast ok */
-              }}
-            />
+            <LeadForm productId={product.id} />
           </div>
 
           <div className="border rounded-xl p-4">
