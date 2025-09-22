@@ -76,9 +76,17 @@ function Stars({ value }: { value: number }) {
   );
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
+function Chip({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <span className="px-2 py-1 text-xs rounded-full bg-muted text-foreground/80">
+    <span
+      className={`px-2 py-1 text-xs rounded-full bg-muted text-foreground/80 ${className}`}
+    >
       {children}
     </span>
   );
