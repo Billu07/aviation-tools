@@ -6,15 +6,39 @@ import { listRecords } from "../../../../lib/airtable";
 
 const T_PRODUCTS = process.env.AIRTABLE_TABLE_PRODUCTS || "Products";
 
+// Create a simple slug version of Product Name in Airtable formula:
+// LOWER(
+//   SUBSTITUTE(
+//     SUBSTITUTE(
+//       SUBSTITUTE({Product Name}," ","-"),
+//     "/","-"),
+//   "&","and")
+// )
+function filterFormulaForSlug(slug: string) {
+  const safe = slug.toLowerCase().replace(/'/g, "\\'");
+  return `
+    OR(
+      LOWER({Slug (optional)})='${safe}',
+      LOWER(
+        SUBSTITUTE(
+          SUBSTITUTE(
+            SUBSTITUTE({Product Name}," ","-"),
+          "/","-"),
+        "&","and")
+      )='${safe}'
+    )
+  `;
+}
+
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ slug: string }> } // <-- params is a Promise in Next 15
+  ctx: { params: Promise<{ slug: string }> }
 ) {
-  const { slug } = await ctx.params; // <-- await it
+  const { slug } = await ctx.params;
 
   try {
     const recs = await listRecords(T_PRODUCTS, {
-      filterByFormula: `LOWER({Slug (optional)}) = '${slug.toLowerCase()}'`,
+      filterByFormula: filterFormulaForSlug(slug),
       maxRecords: "1",
     });
 
@@ -33,6 +57,7 @@ export async function GET(
       .slice(1)
       .map((m) => m?.url)
       .filter(Boolean);
+
     const categories = Array.isArray(f["Categories"])
       ? f["Categories"].map(String)
       : [];
