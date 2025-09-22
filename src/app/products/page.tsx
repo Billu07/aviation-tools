@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
+import { motion } from "framer-motion";
 import {
   Search,
   Star,
   Building2,
-  Check,
-  X,
-  User,
   Link as LinkIcon,
   Loader2,
+  Check,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,11 +18,13 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 
-// ---------- Types
+/* ---------------- Types ---------------- */
+
 export type Category =
   | "Scheduling"
   | "Quoting"
   | "Marketplace / Aircraft Sourcing";
+
 export type FleetSize = "Small" | "Medium" | "Large";
 export type Role = "DO" | "DOM" | "Dispatcher" | "Broker" | "Safety" | "Other";
 
@@ -36,39 +38,40 @@ export type Review = {
   pros: string;
   cons: string;
   wouldRecommend: boolean;
-  date: string;
+  date: string; // ISO
 };
 
 export type Product = {
   id: string;
+  slug?: string;
   name: string;
   vendor: string;
-  categories: Category[];
+  categories: Category[] | string[]; // tolerate plain strings
   website: string;
   description: string;
   logoUrl?: string;
   screenshots?: string[];
   avgRating: number;
   reviewCount: number;
-  recommendPct: number;
+  recommendPct: number; // 0..100
 };
 
-// ---------- UI Helpers
+/* ---------------- Small UI helpers ---------------- */
+
 function Stars({ value }: { value: number }) {
   const full = Math.floor(value);
   const half = value - full >= 0.5;
-  const stars = Array.from({ length: 5 }).map((_, i) => {
-    const filled = i < full || (i === full && half);
-    return (
-      <Star key={i} className={`h-4 w-4 ${filled ? "fill-current" : ""}`} />
-    );
-  });
   return (
     <div
       className="flex items-center gap-1"
       aria-label={`${value.toFixed(1)} out of 5`}
     >
-      {stars}
+      {Array.from({ length: 5 }).map((_, i) => {
+        const filled = i < full || (i === full && half);
+        return (
+          <Star key={i} className={`h-4 w-4 ${filled ? "fill-current" : ""}`} />
+        );
+      })}
       <span className="ml-2 text-xs text-muted-foreground">
         {value.toFixed(1)}
       </span>
@@ -92,7 +95,25 @@ function Chip({
   );
 }
 
-// ---------- Filters
+/** Wraps card with a Link so you don’t have to repeat it everywhere */
+function ClickableCard({
+  href,
+  children,
+  className = "hover:shadow-lg transition-shadow cursor-pointer",
+}: {
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link href={href} className="block">
+      <Card className={className}>{children}</Card>
+    </Link>
+  );
+}
+
+/* ---------------- Filters ---------------- */
+
 const ALL_CATEGORIES: Category[] = [
   "Scheduling",
   "Quoting",
@@ -102,7 +123,8 @@ const ALL_CATEGORIES: Category[] = [
 const ROLES: Role[] = ["DO", "DOM", "Dispatcher", "Broker", "Safety", "Other"];
 const FLEETS: FleetSize[] = ["Small", "Medium", "Large"];
 
-// ---------- Main Component
+/* ---------------- Page ---------------- */
+
 export default function ProductsPage() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<Category | "All">("All");
@@ -116,8 +138,6 @@ export default function ProductsPage() {
     Record<string, Review[]>
   >({});
 
-  const [active, setActive] = useState<Product | null>(null);
-
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -126,27 +146,37 @@ export default function ProductsPage() {
         fetchReviewsApproved(),
       ]);
       setProducts(prods);
+
       // group reviews by product
       const map: Record<string, Review[]> = {};
       reviews.forEach((r) => {
-        if (!map[r.productId]) map[r.productId] = [];
-        map[r.productId].push(r);
+        (map[r.productId] ||= []).push(r);
       });
       setReviewsByProduct(map);
+
       setLoading(false);
     })();
   }, []);
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
-      if (category !== "All" && !p.categories.includes(category)) return false;
+      // category filter
+      if (category !== "All") {
+        const cats = (p.categories || []) as string[];
+        if (!cats.includes(category)) return false;
+      }
+
+      // rating filter
       if (minRating > 0 && (p.avgRating || 0) < minRating) return false;
+
+      // text query
       if (query) {
         const q = query.toLowerCase();
         const haystack = `${p.name} ${p.vendor} ${p.description}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
-      // role/fleet are review-level filters; product must have at least one matching review
+
+      // reviewer-level filters: require at least one matching review
       if (role !== "All" || fleet !== "All") {
         const reviews = reviewsByProduct[p.id] || [];
         const ok = reviews.some(
@@ -156,12 +186,14 @@ export default function ProductsPage() {
         );
         if (!ok) return false;
       }
+
       return true;
     });
   }, [products, category, minRating, query, role, fleet, reviewsByProduct]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      {/* Header */}
       <header className="sticky top-0 z-10 backdrop-blur border-b border-border/50">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -174,8 +206,9 @@ export default function ProductsPage() {
         </div>
       </header>
 
+      {/* Body */}
       <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Filters */}
+        {/* Sidebar filters */}
         <aside className="lg:col-span-3 space-y-4">
           <Card>
             <CardHeader>
@@ -291,7 +324,7 @@ export default function ProductsPage() {
           </Card>
         </aside>
 
-        {/* Results */}
+        {/* Results grid */}
         <section className="lg:col-span-9">
           {loading ? (
             <div className="flex items-center justify-center py-24 text-muted-foreground">
@@ -302,10 +335,7 @@ export default function ProductsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {filtered.map((p) => (
                 <motion.div key={p.id} layout>
-                  <Card
-                    className="hover:shadow-lg transition-shadow cursor-pointer"
-                    onClick={() => setActive(p)}
-                  >
+                  <ClickableCard href={`/products/${p.slug || p.id}`}>
                     <CardHeader className="pb-2">
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-xl bg-muted overflow-hidden">
@@ -332,17 +362,20 @@ export default function ProductsPage() {
                         </div>
                       </div>
                     </CardHeader>
+
                     <CardContent className="space-y-3">
                       <div className="line-clamp-2 text-sm text-muted-foreground">
                         {p.description}
                       </div>
+
                       <div className="flex items-center justify-between">
                         <Stars value={p.avgRating || 0} />
                         <Chip>{p.reviewCount} reviews</Chip>
                         <Chip>{p.recommendPct}% recommend</Chip>
                       </div>
+
                       <div className="flex gap-2 flex-wrap">
-                        {p.categories.map((c) => (
+                        {(p.categories as string[]).map((c) => (
                           <Badge
                             key={c}
                             variant="secondary"
@@ -353,183 +386,19 @@ export default function ProductsPage() {
                         ))}
                       </div>
                     </CardContent>
-                  </Card>
+                  </ClickableCard>
                 </motion.div>
               ))}
             </div>
           )}
         </section>
       </main>
-
-      {/* Product Drawer */}
-      <AnimatePresence>
-        {active && (
-          <motion.div
-            className="fixed inset-0 z-40"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <div
-              className="absolute inset-0 bg-black/50"
-              onClick={() => setActive(null)}
-            />
-            <motion.div
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "spring", stiffness: 240, damping: 28 }}
-              className="absolute right-0 top-0 h-full w-full sm:w-[520px] bg-background shadow-2xl p-6 overflow-y-auto"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-muted overflow-hidden">
-                    {active.logoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={active.logoUrl}
-                        alt="logo"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="h-full w-full grid place-items-center text-xs opacity-60">
-                        Logo
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-lg font-semibold leading-tight">
-                      {active.name}
-                    </div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Building2 className="h-3 w-3" /> {active.vendor}
-                    </div>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  onClick={() => setActive(null)}
-                  className="rounded-full"
-                  aria-label="Close"
-                >
-                  <X className="h-5 w-5" />
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-3 mb-4">
-                <Stars value={active.avgRating || 0} />
-                <Chip>{active.reviewCount} reviews</Chip>
-                <Chip>{active.recommendPct}% recommend</Chip>
-              </div>
-
-              <p className="text-sm text-muted-foreground mb-4">
-                {active.description}
-              </p>
-
-              <div className="flex flex-wrap gap-2 mb-6">
-                {active.categories.map((c) => (
-                  <Badge key={c} variant="secondary" className="rounded-full">
-                    {c}
-                  </Badge>
-                ))}
-              </div>
-
-              <a
-                href={active.website}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 text-sm underline underline-offset-4 mb-6"
-              >
-                <LinkIcon className="h-4 w-4" /> Visit website
-              </a>
-
-              {/* Screenshots */}
-              {active.screenshots && active.screenshots.length > 0 && (
-                <div className="grid grid-cols-2 gap-3 mb-8">
-                  {active.screenshots.map((src, i) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={i}
-                      src={src}
-                      alt={`screenshot ${i + 1}`}
-                      className="w-full h-28 object-cover rounded-xl border"
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Reviews */}
-              <section className="mb-8">
-                <div className="font-semibold mb-2">Reviews</div>
-                <div className="space-y-3">
-                  {(reviewsByProduct[active.id] || []).map((r) => (
-                    <Card key={r.id}>
-                      <CardContent className="pt-4 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm">
-                            <User className="h-4 w-4" /> {r.displayName}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(r.date).toLocaleDateString()}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Stars value={r.rating} />
-                          {r.wouldRecommend ? (
-                            <Chip className="flex items-center gap-1">
-                              <Check className="h-3 w-3" /> Would recommend
-                            </Chip>
-                          ) : (
-                            <Chip>No recommendation</Chip>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {r.role} • {r.fleetSize} fleet
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold">Pros</div>
-                          <p className="text-sm">{r.pros}</p>
-                        </div>
-                        <div>
-                          <div className="text-xs font-semibold">Cons</div>
-                          <p className="text-sm">{r.cons}</p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {(reviewsByProduct[active.id] || []).length === 0 && (
-                    <div className="text-sm text-muted-foreground">
-                      No reviews yet.
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* CTAs */}
-              <section className="space-y-3">
-                <div className="font-semibold">Request Info</div>
-                <LeadForm
-                  productId={active.id}
-                  onDone={() => alert("Thanks! We'll be in touch.")}
-                />
-
-                <div className="font-semibold mt-6">Write a Review</div>
-                <ReviewForm
-                  productId={active.id}
-                  onDone={() =>
-                    alert("Thanks! Your review is pending approval.")
-                  }
-                />
-              </section>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
 
-// ---------- Forms
+/* ---------------- Forms (unchanged; still post to your APIs) ---------------- */
+
 function ReviewForm({
   productId,
   onDone,
@@ -755,7 +624,8 @@ function LeadForm({
   );
 }
 
-// ---------- Data Fetchers (defensive)
+/* ---------------- Data fetchers (defensive) ---------------- */
+
 async function fetchProducts(): Promise<Product[]> {
   try {
     const res = await fetch("/api/products", { cache: "no-store" });
