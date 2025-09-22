@@ -8,16 +8,19 @@ const T_PRODUCTS = process.env.AIRTABLE_TABLE_PRODUCTS || "Products";
 
 export async function GET(
   _req: Request,
-  { params }: { params: { slug: string } }
+  ctx: { params: Promise<{ slug: string }> } // <-- params is a Promise in Next 15
 ) {
+  const { slug } = await ctx.params; // <-- await it
+
   try {
     const recs = await listRecords(T_PRODUCTS, {
-      filterByFormula: `LOWER({Slug (optional)}) = '${params.slug.toLowerCase()}'`,
+      filterByFormula: `LOWER({Slug (optional)}) = '${slug.toLowerCase()}'`,
       maxRecords: "1",
     });
 
-    if (!recs?.length)
+    if (!recs?.length) {
       return NextResponse.json({ notFound: true }, { status: 200 });
+    }
 
     const p = recs[0];
     const f = p.fields as any;
@@ -30,7 +33,6 @@ export async function GET(
       .slice(1)
       .map((m) => m?.url)
       .filter(Boolean);
-
     const categories = Array.isArray(f["Categories"])
       ? f["Categories"].map(String)
       : [];

@@ -8,11 +8,13 @@ const T_PRODUCTS = process.env.AIRTABLE_TABLE_PRODUCTS || "Products";
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> } // <-- Promise
 ) {
+  const { id } = await ctx.params; // <-- await
+
   try {
     const recs = await listRecords(T_PRODUCTS, {
-      filterByFormula: `RECORD_ID() = '${params.id}'`,
+      filterByFormula: `RECORD_ID() = '${id}'`,
       maxRecords: "1",
     });
     if (!recs?.length)
@@ -29,12 +31,11 @@ export async function GET(
       .slice(1)
       .map((m) => m?.url)
       .filter(Boolean);
-
     const categories = Array.isArray(f["Categories"])
       ? f["Categories"].map(String)
       : [];
-    const features = Array.isArray((f as any)["Features"])
-      ? (f as any)["Features"].map(String)
+    const features = Array.isArray(f["Features"])
+      ? f["Features"].map(String)
       : [];
 
     const reviewCount = Number(f["Review Count"]) || 0;
@@ -62,7 +63,7 @@ export async function GET(
       reviewCount,
       recommendPct,
     });
-  } catch (e) {
+  } catch {
     return NextResponse.json({ notFound: true }, { status: 200 });
   }
 }
