@@ -1,0 +1,773 @@
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Search,
+  Star,
+  Building2,
+  Check,
+  X,
+  User,
+  Link as LinkIcon,
+  Loader2,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+
+// ---------- Types
+export type Category =
+  | "Scheduling"
+  | "Quoting"
+  | "Marketplace / Aircraft Sourcing";
+export type FleetSize = "Small" | "Medium" | "Large";
+export type Role = "DO" | "DOM" | "Dispatcher" | "Broker" | "Safety" | "Other";
+
+export type Review = {
+  id: string;
+  productId: string;
+  displayName: string;
+  role: Role;
+  fleetSize: FleetSize;
+  rating: number;
+  pros: string;
+  cons: string;
+  wouldRecommend: boolean;
+  date: string;
+};
+
+export type Product = {
+  id: string;
+  name: string;
+  vendor: string;
+  categories: Category[];
+  website: string;
+  description: string;
+  logoUrl?: string;
+  screenshots?: string[];
+  avgRating: number;
+  reviewCount: number;
+  recommendPct: number;
+};
+
+// ---------- UI Helpers
+function Stars({ value }: { value: number }) {
+  const full = Math.floor(value);
+  const half = value - full >= 0.5;
+  const stars = Array.from({ length: 5 }).map((_, i) => {
+    const filled = i < full || (i === full && half);
+    return (
+      <Star key={i} className={`h-4 w-4 ${filled ? "fill-current" : ""}`} />
+    );
+  });
+  return (
+    <div
+      className="flex items-center gap-1"
+      aria-label={`${value.toFixed(1)} out of 5`}
+    >
+      {stars}
+      <span className="ml-2 text-xs text-muted-foreground">
+        {value.toFixed(1)}
+      </span>
+    </div>
+  );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="px-2 py-1 text-xs rounded-full bg-muted text-foreground/80">
+      {children}
+    </span>
+  );
+}
+
+// ---------- Filters
+const ALL_CATEGORIES: Category[] = [
+  "Scheduling",
+  "Quoting",
+  "Marketplace / Aircraft Sourcing",
+];
+
+const ROLES: Role[] = ["DO", "DOM", "Dispatcher", "Broker", "Safety", "Other"];
+const FLEETS: FleetSize[] = ["Small", "Medium", "Large"];
+
+// ---------- Main Component
+export default function ProductsPage() {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<Category | "All">("All");
+  const [minRating, setMinRating] = useState<number>(0);
+  const [role, setRole] = useState<Role | "All">("All");
+  const [fleet, setFleet] = useState<FleetSize | "All">("All");
+
+  const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [reviewsByProduct, setReviewsByProduct] = useState<
+    Record<string, Review[]>
+  >({});
+
+  const [active, setActive] = useState<Product | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const [prods, reviews] = await Promise.all([
+        fetchProducts(),
+        fetchReviewsApproved(),
+      ]);
+      setProducts(prods);
+      // group reviews by product
+      const map: Record<string, Review[]> = {};
+      reviews.forEach((r) => {
+        if (!map[r.productId]) map[r.productId] = [];
+        map[r.productId].push(r);
+      });
+      setReviewsByProduct(map);
+      setLoading(false);
+    })();
+  }, []);
+
+  const filtered = useMemo(() => {
+    return products.filter((p) => {
+      if (category !== "All" && !p.categories.includes(category)) return false;
+      if (minRating > 0 && (p.avgRating || 0) < minRating) return false;
+      if (query) {
+        const q = query.toLowerCase();
+        const haystack = `${p.name} ${p.vendor} ${p.description}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      // role/fleet are review-level filters; product must have at least one matching review
+      if (role !== "All" || fleet !== "All") {
+        const reviews = reviewsByProduct[p.id] || [];
+        const ok = reviews.some(
+          (r) =>
+            (role === "All" || r.role === role) &&
+            (fleet === "All" || r.fleetSize === fleet)
+        );
+        if (!ok) return false;
+      }
+      return true;
+    });
+  }, [products, category, minRating, query, role, fleet, reviewsByProduct]);
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-10 backdrop-blur border-b border-border/50">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-xl bg-primary/15" />
+            <span className="font-semibold tracking-tight">Aviation Tools</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge className="rounded-full">MVP</Badge>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Filters */}
+        <aside className="lg:col-span-3 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Search</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 opacity-60" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search products…"
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Category</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button
+                variant={category === "All" ? "default" : "outline"}
+                onClick={() => setCategory("All")}
+                className="rounded-full"
+              >
+                All
+              </Button>
+              {ALL_CATEGORIES.map((c) => (
+                <Button
+                  key={c}
+                  variant={category === c ? "default" : "outline"}
+                  onClick={() => setCategory(c)}
+                  className="rounded-full"
+                >
+                  {c}
+                </Button>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Minimum Rating</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              {[0, 3, 4, 4.5].map((r) => (
+                <Button
+                  key={r}
+                  variant={minRating === r ? "default" : "outline"}
+                  onClick={() => setMinRating(r)}
+                  className="rounded-full"
+                >
+                  {r === 0 ? "Any" : `${r}+`}
+                </Button>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Reviewer Filters</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">Role</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={role === "All" ? "default" : "outline"}
+                    onClick={() => setRole("All")}
+                    className="rounded-full"
+                  >
+                    All
+                  </Button>
+                  {ROLES.map((r) => (
+                    <Button
+                      key={r}
+                      variant={role === r ? "default" : "outline"}
+                      onClick={() => setRole(r)}
+                      className="rounded-full"
+                    >
+                      {r}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground mb-2">
+                  Fleet Size
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={fleet === "All" ? "default" : "outline"}
+                    onClick={() => setFleet("All")}
+                    className="rounded-full"
+                  >
+                    All
+                  </Button>
+                  {FLEETS.map((f) => (
+                    <Button
+                      key={f}
+                      variant={fleet === f ? "default" : "outline"}
+                      onClick={() => setFleet(f)}
+                      className="rounded-full"
+                    >
+                      {f}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </aside>
+
+        {/* Results */}
+        <section className="lg:col-span-9">
+          {loading ? (
+            <div className="flex items-center justify-center py-24 text-muted-foreground">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading
+              products…
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filtered.map((p) => (
+                <motion.div key={p.id} layout>
+                  <Card
+                    className="hover:shadow-lg transition-shadow cursor-pointer"
+                    onClick={() => setActive(p)}
+                  >
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl bg-muted overflow-hidden">
+                          {p.logoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={p.logoUrl}
+                              alt={`${p.name} logo`}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="h-full w-full grid place-items-center text-xs opacity-60">
+                              Logo
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <CardTitle className="text-base leading-tight">
+                            {p.name}
+                          </CardTitle>
+                          <div className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Building2 className="h-3 w-3" /> {p.vendor}
+                          </div>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="line-clamp-2 text-sm text-muted-foreground">
+                        {p.description}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <Stars value={p.avgRating || 0} />
+                        <Chip>{p.reviewCount} reviews</Chip>
+                        <Chip>{p.recommendPct}% recommend</Chip>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        {p.categories.map((c) => (
+                          <Badge
+                            key={c}
+                            variant="secondary"
+                            className="rounded-full"
+                          >
+                            {c}
+                          </Badge>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </section>
+      </main>
+
+      {/* Product Drawer */}
+      <AnimatePresence>
+        {active && (
+          <motion.div
+            className="fixed inset-0 z-40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setActive(null)}
+            />
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", stiffness: 240, damping: 28 }}
+              className="absolute right-0 top-0 h-full w-full sm:w-[520px] bg-background shadow-2xl p-6 overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-muted overflow-hidden">
+                    {active.logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={active.logoUrl}
+                        alt="logo"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-full w-full grid place-items-center text-xs opacity-60">
+                        Logo
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-lg font-semibold leading-tight">
+                      {active.name}
+                    </div>
+                    <div className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Building2 className="h-3 w-3" /> {active.vendor}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => setActive(null)}
+                  className="rounded-full"
+                  aria-label="Close"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-3 mb-4">
+                <Stars value={active.avgRating || 0} />
+                <Chip>{active.reviewCount} reviews</Chip>
+                <Chip>{active.recommendPct}% recommend</Chip>
+              </div>
+
+              <p className="text-sm text-muted-foreground mb-4">
+                {active.description}
+              </p>
+
+              <div className="flex flex-wrap gap-2 mb-6">
+                {active.categories.map((c) => (
+                  <Badge key={c} variant="secondary" className="rounded-full">
+                    {c}
+                  </Badge>
+                ))}
+              </div>
+
+              <a
+                href={active.website}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 text-sm underline underline-offset-4 mb-6"
+              >
+                <LinkIcon className="h-4 w-4" /> Visit website
+              </a>
+
+              {/* Screenshots */}
+              {active.screenshots && active.screenshots.length > 0 && (
+                <div className="grid grid-cols-2 gap-3 mb-8">
+                  {active.screenshots.map((src, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={i}
+                      src={src}
+                      alt={`screenshot ${i + 1}`}
+                      className="w-full h-28 object-cover rounded-xl border"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Reviews */}
+              <section className="mb-8">
+                <div className="font-semibold mb-2">Reviews</div>
+                <div className="space-y-3">
+                  {(reviewsByProduct[active.id] || []).map((r) => (
+                    <Card key={r.id}>
+                      <CardContent className="pt-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm">
+                            <User className="h-4 w-4" /> {r.displayName}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {new Date(r.date).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Stars value={r.rating} />
+                          {r.wouldRecommend ? (
+                            <Chip className="flex items-center gap-1">
+                              <Check className="h-3 w-3" /> Would recommend
+                            </Chip>
+                          ) : (
+                            <Chip>No recommendation</Chip>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {r.role} • {r.fleetSize} fleet
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">Pros</div>
+                          <p className="text-sm">{r.pros}</p>
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold">Cons</div>
+                          <p className="text-sm">{r.cons}</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {(reviewsByProduct[active.id] || []).length === 0 && (
+                    <div className="text-sm text-muted-foreground">
+                      No reviews yet.
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* CTAs */}
+              <section className="space-y-3">
+                <div className="font-semibold">Request Info</div>
+                <LeadForm
+                  productId={active.id}
+                  onDone={() => alert("Thanks! We'll be in touch.")}
+                />
+
+                <div className="font-semibold mt-6">Write a Review</div>
+                <ReviewForm
+                  productId={active.id}
+                  onDone={() =>
+                    alert("Thanks! Your review is pending approval.")
+                  }
+                />
+              </section>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ---------- Forms
+function ReviewForm({
+  productId,
+  onDone,
+}: {
+  productId: string;
+  onDone: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    role: "Dispatcher" as Role,
+    fleet: "Small" as FleetSize,
+    rating: 5,
+    pros: "",
+    cons: "",
+    anonymous: false,
+    wouldRecommend: true,
+  });
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId,
+          reviewerName: form.name,
+          email: form.email,
+          role: form.role,
+          fleetSize: form.fleet,
+          rating: form.rating,
+          pros: form.pros,
+          cons: form.cons,
+          anonymous: form.anonymous,
+          wouldRecommend: form.wouldRecommend,
+        }),
+      });
+      onDone();
+      setForm({
+        name: "",
+        email: "",
+        role: "Dispatcher",
+        fleet: "Small",
+        rating: 5,
+        pros: "",
+        cons: "",
+        anonymous: false,
+        wouldRecommend: true,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Input
+          placeholder="Your name"
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+        />
+        <Input
+          type="email"
+          placeholder="Email (not shown)"
+          value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <select
+          className="h-10 rounded-md border bg-background px-3"
+          value={form.role}
+          onChange={(e) => setForm({ ...form, role: e.target.value as Role })}
+        >
+          {ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <select
+          className="h-10 rounded-md border bg-background px-3"
+          value={form.fleet}
+          onChange={(e) =>
+            setForm({ ...form, fleet: e.target.value as FleetSize })
+          }
+        >
+          {FLEETS.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+        <select
+          className="h-10 rounded-md border bg-background px-3"
+          value={String(form.rating)}
+          onChange={(e) => setForm({ ...form, rating: Number(e.target.value) })}
+        >
+          {[5, 4, 3, 2, 1].map((n) => (
+            <option key={n} value={n}>
+              {n} stars
+            </option>
+          ))}
+        </select>
+      </div>
+      <Textarea
+        placeholder="Pros"
+        value={form.pros}
+        onChange={(e) => setForm({ ...form, pros: e.target.value })}
+      />
+      <Textarea
+        placeholder="Cons"
+        value={form.cons}
+        onChange={(e) => setForm({ ...form, cons: e.target.value })}
+      />
+      <div className="flex items-center gap-4 text-sm">
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={form.anonymous}
+            onChange={(e) => setForm({ ...form, anonymous: e.target.checked })}
+          />
+          Post as Anonymous
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={form.wouldRecommend}
+            onChange={(e) =>
+              setForm({ ...form, wouldRecommend: e.target.checked })
+            }
+          />
+          Would recommend
+        </label>
+      </div>
+      <Button type="submit" disabled={submitting} className="w-full">
+        {submitting ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          "Submit review"
+        )}
+      </Button>
+    </form>
+  );
+}
+
+function LeadForm({
+  productId,
+  onDone,
+}: {
+  productId: string;
+  onDone: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    company: "",
+    role: "",
+    message: "",
+  });
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, ...form }),
+      });
+      onDone();
+      setForm({ name: "", email: "", company: "", role: "", message: "" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Input
+          placeholder="Your name"
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+        />
+        <Input
+          type="email"
+          placeholder="Email"
+          value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Input
+          placeholder="Company"
+          value={form.company}
+          onChange={(e) => setForm({ ...form, company: e.target.value })}
+        />
+        <Input
+          placeholder="Role (optional)"
+          value={form.role}
+          onChange={(e) => setForm({ ...form, role: e.target.value })}
+        />
+      </div>
+      <Textarea
+        placeholder="Message"
+        value={form.message}
+        onChange={(e) => setForm({ ...form, message: e.target.value })}
+      />
+      <Button type="submit" disabled={submitting} className="w-full">
+        {submitting ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          "Request info"
+        )}
+      </Button>
+    </form>
+  );
+}
+
+// ---------- Data Fetchers (defensive)
+async function fetchProducts(): Promise<Product[]> {
+  try {
+    const res = await fetch("/api/products", { cache: "no-store" });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? (data as Product[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchReviewsApproved(): Promise<Review[]> {
+  try {
+    const res = await fetch("/api/reviews?approved=true", {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? (data as Review[]) : [];
+  } catch {
+    return [];
+  }
+}
