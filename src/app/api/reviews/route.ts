@@ -6,116 +6,162 @@ export const dynamic = "force-dynamic";
 import { listRecords, createRecord } from "../../../lib/airtable";
 
 const T_REVIEWS = process.env.AIRTABLE_TABLE_REVIEWS || "Reviews";
+const T_PRODUCTS = process.env.AIRTABLE_TABLE_PRODUCTS || "Products";
 
-/**
- * GET /api/reviews?approved=true|false
- * - approved=true: return only approved reviews
- * - default: return all
- */
-export async function GET(req: Request) {
+// If you renamed the linked field for product, one of these should match.
+// You can add more variants if needed.
+const PRODUCT_LINK_FIELDS = [
+  "Product",
+  "Products",
+  "Product Link",
+  "Product (link)",
+  "Product Record",
+];
+
+// GET ?approved=true&productId=rec... (optional)
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const approved = url.searchParams.get("approved");
+  const productId = url.searchParams.get("productId");
+
   try {
-    const url = new URL(req.url);
-    const approvedOnly = url.searchParams.get("approved") === "true";
+    const params: Record<string, string> = {};
+    const filters: string[] = [];
 
-    let filterByFormula = "";
-    // Support either a checkbox "Approved" or a "Status" single select with 'Approved'
-    if (approvedOnly) {
-      filterByFormula = "OR({Approved}=TRUE(), {Status}='Approved')";
+    if (approved === "true") {
+      // support either checkbox "Approved" or a single-select Status
+      filters.push('OR({Approved}=TRUE(), {Status}="Approved")');
+    }
+    if (productId) {
+      // match any possible product-link field: OR(Product=rec123, Products=rec123, ...)
+      const ors = PRODUCT_LINK_FIELDS.map((f) => `{${f}}='${productId}'`).join(
+        ", "
+      );
+      filters.push(`OR(${ors})`);
     }
 
-    const records = await listRecords(T_REVIEWS, {
-      ...(filterByFormula ? { filterByFormula } : {}),
-    });
+    if (filters.length) {
+      params.filterByFormula =
+        filters.length === 1 ? filters[0] : `AND(${filters.join(",")})`;
+    }
 
-    const mapped = records.map((r) => {
-      const f = r.fields as any;
-      // If Product is linked, Airtable returns an array of record ids
-      const productIds: string[] = Array.isArray(f["Product"])
-        ? f["Product"]
-        : [];
-      return {
-        id: r.id,
-        productId: productIds[0] || f["Product Id"] || "", // fallback if you kept a text field
-        displayName:
-          f["Display Name"] ||
-          (f["Anonymous?"] ? "Anonymous" : f["Reviewer Name"] || "Anonymous"),
-        role: f["Role"] || "Other",
-        fleetSize: f["Fleet Size"] || "Small",
-        rating: Number(f["Star Rating"]) || 0,
-        pros: f["Pros"] || "",
-        cons: f["Cons"] || "",
-        wouldRecommend: !!f["Would Recommend"],
-        date: f["Date"] || new Date().toISOString(),
-      };
-    });
+    const recs = await listRecords(T_REVIEWS, params);
+    const mapped = recs
+      .map((r) => {
+        const f = r.fields as any;
+        const date =
+          f["Date"] || f["Created"] || f["Created Time"] || r["createdTime"];
+        return {
+          id: r.id,
+          productId, // not strictly needed in UI here
+          displayName: f["Anonymous"]
+            ? "Anonymous"
+            : f["Reviewer Name"] || f["Name"] || "Anonymous",
+          role: f["Role"] || "Other",
+          fleetSize: f["Fleet Size"] || "Small",
+          rating: Number(f["Star Rating"] ?? f["Rating"] ?? 0),
+          pros: f["Pros"] || "",
+          cons: f["Cons"] || "",
+          wouldRecommend: Boolean(f["Would Recommend"]),
+          date: typeof date === "string" ? date : new Date().toISOString(),
+        };
+      })
+      // newest first
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return NextResponse.json(mapped);
-  } catch (e) {
-    console.error("[/api/reviews GET]", e);
-    return NextResponse.json([]);
+  } catch (e: any) {
+    console.error("[/api/reviews GET] error:", e?.message || e);
+    return NextResponse.json(
+      { ok: false, error: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
 
-/**
- * POST /api/reviews
- * Body:
- * { productId, reviewerName, email, role, fleetSize, rating, pros, cons, anonymous, wouldRecommend }
- *
- * Notes:
- * - If Reviews.Product is a linked field to Products, it MUST be an array: { Product: [productId] }
- * - We default Status='Pending' and Approved=false so your “approved only” feed stays clean.
- */
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const body = await req.json();
-
+    const body = await request.json();
     const {
-      productId,
-      reviewerName,
-      email,
-      role,
-      fleetSize,
-      rating,
-      pros,
-      cons,
-      anonymous,
-      wouldRecommend,
+      productId, // recXXXX of the product
+      reviewerName = "",
+      email = "",
+      role = "Dispatcher",
+      fleetSize = "Small",
+      rating = 5,
+      pros = "",
+      cons = "",
+      anonymous = false,
+      wouldRecommend = true,
     } = body || {};
 
-    if (!productId) {
+    if (
+      !productId ||
+      typeof productId !== "string" ||
+      !productId.startsWith("rec")
+    ) {
       return NextResponse.json(
-        { ok: false, error: "Missing productId" },
+        {
+          ok: false,
+          error: "Invalid productId. Expected an Airtable record id (rec...).",
+        },
         { status: 400 }
       );
     }
 
-    // Build Airtable fields
-    const fields: Record<string, any> = {
-      // Linked record to Products — must be an array of record ids
-      Product: [productId],
-      "Reviewer Name": reviewerName || "",
-      Email: email || "",
-      Role: role || "",
-      "Fleet Size": fleetSize || "",
-      "Star Rating": Number(rating) || 0,
-      Pros: pros || "",
-      Cons: cons || "",
-      "Anonymous?": !!anonymous,
-      "Would Recommend": !!wouldRecommend,
-      Date: new Date().toISOString(),
-      // moderation defaults (adjust to your actual column names)
-      Approved: false,
-      Status: "Pending",
+    // Build the common non-link fields
+    const baseFields = {
+      "Reviewer Name": reviewerName,
+      Email: email,
+      Role: role,
+      "Fleet Size": fleetSize,
+      "Star Rating": Number(rating),
+      Pros: pros,
+      Cons: cons,
+      Anonymous: Boolean(anonymous),
+      "Would Recommend": Boolean(wouldRecommend),
+      Approved: false, // default moderation
+      Date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
     };
 
-    const created = await createRecord(T_REVIEWS, fields);
+    // Some bases have both "Approved" (checkbox) and "Status" (single select):
+    // We can optionally set Status to "Pending".
+    (baseFields as any)["Status"] = (baseFields as any)["Status"] || "Pending";
 
-    return NextResponse.json({ ok: true, id: created.id });
+    // Try each candidate field name for the product link until one works.
+    let lastErr: any = null;
+    for (const linkField of PRODUCT_LINK_FIELDS) {
+      const fieldsAttempt: Record<string, any> = {
+        ...baseFields,
+        [linkField]: [productId], // IMPORTANT: linked record expects an ARRAY of IDs
+      };
+
+      try {
+        const created = await createRecord(T_REVIEWS, fieldsAttempt);
+        return NextResponse.json({ ok: true, id: created?.id });
+      } catch (err: any) {
+        // If it's a 422 about invalid value for column, try next field name
+        lastErr = err;
+        continue;
+      }
+    }
+
+    // If all attempts failed, surface the last error for debugging
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Unable to write to the linked Product field. Check the exact column name in Reviews.",
+        detail: String(lastErr?.message || lastErr),
+        triedFields: PRODUCT_LINK_FIELDS,
+      },
+      { status: 422 }
+    );
   } catch (e: any) {
-    console.error("[/api/reviews POST]", e?.message || e);
+    console.error("[/api/reviews POST] error:", e?.message || e);
     return NextResponse.json(
       { ok: false, error: String(e?.message || e) },
-      { status: 200 }
+      { status: 500 }
     );
   }
 }
