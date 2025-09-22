@@ -8,8 +8,7 @@ import { listRecords, createRecord } from "../../../lib/airtable";
 const T_REVIEWS = process.env.AIRTABLE_TABLE_REVIEWS || "Reviews";
 const T_PRODUCTS = process.env.AIRTABLE_TABLE_PRODUCTS || "Products";
 
-// If you renamed the linked field for product, one of these should match.
-// You can add more variants if needed.
+// If your linked field to Products has a different name, add it here.
 const PRODUCT_LINK_FIELDS = [
   "Product",
   "Products",
@@ -18,7 +17,7 @@ const PRODUCT_LINK_FIELDS = [
   "Product Record",
 ];
 
-// GET ?approved=true&productId=rec... (optional)
+// GET /api/reviews?approved=true&productId=rec...
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const approved = url.searchParams.get("approved");
@@ -29,11 +28,12 @@ export async function GET(request: Request) {
     const filters: string[] = [];
 
     if (approved === "true") {
-      // support either checkbox "Approved" or a single-select Status
+      // Support either a checkbox "Approved" or a single-select "Status"
       filters.push('OR({Approved}=TRUE(), {Status}="Approved")');
     }
+
     if (productId) {
-      // match any possible product-link field: OR(Product=rec123, Products=rec123, ...)
+      // OR across possible product link field names
       const ors = PRODUCT_LINK_FIELDS.map((f) => `{${f}}='${productId}'`).join(
         ", "
       );
@@ -46,14 +46,19 @@ export async function GET(request: Request) {
     }
 
     const recs = await listRecords(T_REVIEWS, params);
+
     const mapped = recs
       .map((r) => {
         const f = r.fields as any;
-        const date =
-          f["Date"] || f["Created"] || f["Created Time"] || r["createdTime"];
+        const createdTime =
+          (f["Date"] as string | undefined) ||
+          (f["Created"] as string | undefined) ||
+          (f["Created Time"] as string | undefined) ||
+          ((r as any).createdTime as string | undefined);
+
         return {
           id: r.id,
-          productId, // not strictly needed in UI here
+          productId: productId ?? "", // optional
           displayName: f["Anonymous"]
             ? "Anonymous"
             : f["Reviewer Name"] || f["Name"] || "Anonymous",
@@ -63,7 +68,7 @@ export async function GET(request: Request) {
           pros: f["Pros"] || "",
           cons: f["Cons"] || "",
           wouldRecommend: Boolean(f["Would Recommend"]),
-          date: typeof date === "string" ? date : new Date().toISOString(),
+          date: createdTime || new Date().toISOString(),
         };
       })
       // newest first
@@ -79,11 +84,12 @@ export async function GET(request: Request) {
   }
 }
 
+// POST /api/reviews
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const {
-      productId, // recXXXX of the product
+      productId,
       reviewerName = "",
       email = "",
       role = "Dispatcher",
@@ -109,8 +115,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Build the common non-link fields
-    const baseFields = {
+    // Non-link fields
+    const baseFields: Record<string, any> = {
       "Reviewer Name": reviewerName,
       Email: email,
       Role: role,
@@ -120,33 +126,24 @@ export async function POST(request: Request) {
       Cons: cons,
       Anonymous: Boolean(anonymous),
       "Would Recommend": Boolean(wouldRecommend),
-      Approved: false, // default moderation
+      Approved: false,
+      Status: "Pending", // if you have a Status single-select
       Date: new Date().toISOString().slice(0, 10), // YYYY-MM-DD
     };
 
-    // Some bases have both "Approved" (checkbox) and "Status" (single select):
-    // We can optionally set Status to "Pending".
-    (baseFields as any)["Status"] = (baseFields as any)["Status"] || "Pending";
-
-    // Try each candidate field name for the product link until one works.
+    // Try each possible product-link field name until one succeeds.
     let lastErr: any = null;
     for (const linkField of PRODUCT_LINK_FIELDS) {
-      const fieldsAttempt: Record<string, any> = {
-        ...baseFields,
-        [linkField]: [productId], // IMPORTANT: linked record expects an ARRAY of IDs
-      };
-
       try {
+        const fieldsAttempt = { ...baseFields, [linkField]: [productId] }; // IMPORTANT: array of rec IDs
         const created = await createRecord(T_REVIEWS, fieldsAttempt);
         return NextResponse.json({ ok: true, id: created?.id });
       } catch (err: any) {
-        // If it's a 422 about invalid value for column, try next field name
         lastErr = err;
-        continue;
+        // Continue trying next field name
       }
     }
 
-    // If all attempts failed, surface the last error for debugging
     return NextResponse.json(
       {
         ok: false,
