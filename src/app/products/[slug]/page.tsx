@@ -31,15 +31,16 @@ type Review = {
   date: string;
 };
 
-function getBaseUrl() {
-  const h = headers();
+// AFTER (Next 15)
+async function getBaseUrl() {
+  const h = await headers(); // headers() is async now
   const proto = h.get("x-forwarded-proto") || "http";
   const host = h.get("host") || "localhost:3000";
   return `${proto}://${host}`;
 }
 
 async function fetchJSON<T>(path: string): Promise<T> {
-  const base = getBaseUrl();
+  const base = await getBaseUrl();
   const res = await fetch(`${base}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch ${path}: ${res.status}`);
   return res.json();
