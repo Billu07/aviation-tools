@@ -13,7 +13,7 @@ const PRODUCT_LINK_FIELDS = [
   "Product",
   "Products",
   "Product Link",
-  "Product (link)",
+  "Product(link)",
   "Product Record",
 ];
 
